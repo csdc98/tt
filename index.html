@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>東南亞雜貨店 POS</title>
-<!-- 導入跨平台相機掃描套件 -->
+<!-- 跨平台相機掃描套件 -->
 <script src="https://unpkg.com/html5-qrcode"></script>
 <style>
 *{box-sizing:border-box}
@@ -14,7 +14,7 @@ h1{font-size:22px;margin:0}
 #todayTotal{font-size:18px;font-weight:700}
 main{max-width:1100px;margin:auto;padding:18px}
 .grid{display:grid;grid-template-columns:1fr 1.2fr;gap:18px}
-.card{background:white;border-radius:16px;padding:20px;box-shadow:0 2px 10px #00000012;transition:background 0.3s}
+.card{background:white;border-radius:16px;padding:20px;box-shadow:0 2px 10px #00000012;position:relative}
 .scanbox{font-size:20px;width:100%;padding:18px;border:2px solid #d1d5db;border-radius:12px}
 .scanbox:focus{outline:none;border-color:#111827}
 button{border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:700;cursor:pointer}
@@ -26,23 +26,29 @@ button{border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:
 .ok{background:#dcfce7;color:#15803d}.err{background:#fee2e2;color:#b91c1c}
 .items{min-height:300px}
 .item{display:flex;justify-content:space-between;align-items:center;padding:13px 10px;border-bottom:1px solid #e5e7eb;border-radius:8px}
-/* 最新加入的商品高亮樣式 */
 .item.latest{background:#fef9c3;border-left:4px solid #eab308;animation:pulse 1s infinite alternate}
 @keyframes pulse{from{opacity:0.85}to{opacity:1}}
 .item small{color:#6b7280}
 .item button{padding:7px 10px;font-size:14px;background:#fee2e2;color:#991b1b}
-.total{font-size:30px;font-weight:800;text-align:right;padding-top:18px}
+.total-box{padding-top:18px;display:flex;justify-content:space-between;align-items:baseline}
+.item-count-badge{font-size:20px;font-weight:700;color:#2563eb;background:#dbeafe;padding:4px 12px;border-radius:20px}
+.total{font-size:32px;font-weight:800;text-align:right}
 .checkout{width:100%;font-size:22px;margin-top:14px;background:#16a34a;color:white}
 .clear{width:100%;margin-top:8px}
 .history{max-height:320px;overflow:auto}
 .historyrow{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee}
 .hint{color:#6b7280;font-size:14px;line-height:1.6}
-#reader{width:100%;display:none;margin-top:12px;border-radius:12px;overflow:hidden;background:#000;border:3px solid transparent;transition:border-color 0.2s}
-#reader.scan-flash{border-color:#22c55e !important} /* 掃描成功綠框閃爍 */
+#reader{width:100%;display:none;margin-top:12px;border-radius:12px;overflow:hidden;background:#000;border:4px solid transparent;transition:border-color 0.2s}
+#reader.scan-flash{border-color:#22c55e !important}
+
+/* 大字體防漏掃跳窗 Toast */
+#toast{position:fixed;top:20px;left:50%;transform:translateX(-50%);background:rgba(17,24,39,0.95);color:#fff;padding:14px 28px;border-radius:50px;font-size:20px;font-weight:bold;box-shadow:0 10px 25px rgba(0,0,0,0.3);display:none;z-index:9999;text-align:center;pointer-events:none}
 @media(max-width:750px){.grid{grid-template-columns:1fr}header{align-items:flex-start;gap:10px;flex-direction:column}}
 </style>
 </head>
 <body>
+<div id="toast">✅ 已刷入商品</div>
+
 <header>
   <h1>🏪 東南亞雜貨店 POS</h1>
   <div id="todayTotal">今日營業額：$0</div>
@@ -53,19 +59,24 @@ button{border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:
 <section class="card">
   <h2>掃描商品 / 輸入金額</h2>
   <div class="scanrow">
-    <input id="code" class="scanbox" type="text" inputmode="decimal" autocomplete="off" autofocus placeholder="請輸入金額，例如 100">
+    <input id="code" class="scanbox" type="text" inputmode="decimal" autocomplete="off" placeholder="請輸入金額，例如 100">
     <button class="primary" onclick="addFromInput()">加入</button>
   </div>
   <div id="status" class="hint">掃描條碼或直接輸入數字（例如：100 或 50）</div>
   <button id="camBtn" class="secondary" style="margin-top:10px;width:100%" onclick="toggleCamera()">📷 開啟連續相機掃描</button>
   <div id="reader"></div>
-  <p class="hint">規則說明：開啟相機後可連續掃描商品，每次成功掃描皆會有提示聲與高亮顯示。</p>
+  <p class="hint">防漏掃提示：掃描時請核對畫面中央顯示的「目前總件數」是否與桌上商品數量一致。</p>
 </section>
 
 <section class="card">
   <h2>目前這位客人</h2>
   <div id="items" class="items"><div class="hint">尚未掃描商品</div></div>
-  <div class="total">總計：$<span id="cartTotal">0</span></div>
+  
+  <div class="total-box">
+    <span id="itemCountBadge" class="item-count-badge">共 0 件商品</span>
+    <div class="total">總計：$<span id="cartTotal">0</span></div>
+  </div>
+  
   <button class="checkout" onclick="checkout()">✓ 結帳</button>
   <button class="secondary clear" onclick="clearCart()">清除目前客人</button>
 </section>
@@ -82,29 +93,40 @@ const cart = [];
 const history = [];
 const codeInput = document.getElementById('code');
 const statusEl = document.getElementById('status');
+const toastEl = document.getElementById('toast');
 let html5QrcodeScanner = null;
 let lastScannedCode = '';
 let lastScannedTime = 0;
+let toastTimer = null;
 
 function money(n){ return Math.round(n).toLocaleString('zh-TW'); }
 
-// 播放提示音 (掃描成功嗶嗶聲)
+// 高音提示嗶聲
 function playBeep(){
   try{
     const ctx = new (window.AudioContext || window.webkitAudioContext)();
     const osc = ctx.createOscillator();
     const gain = ctx.createGain();
     osc.type = 'sine';
-    osc.frequency.setValueAtTime(880, ctx.currentTime); // 880Hz 高音
-    gain.gain.setValueAtTime(0.1, ctx.currentTime);
+    osc.frequency.setValueAtTime(1000, ctx.currentTime);
+    gain.gain.setValueAtTime(0.15, ctx.currentTime);
     osc.connect(gain);
     gain.connect(ctx.destination);
     osc.start();
-    osc.stop(ctx.currentTime + 0.12);
+    osc.stop(ctx.currentTime + 0.1);
   }catch(e){}
 }
 
-// 價格解析與防呆 logic
+// 防漏掃大字體跳窗提示
+function showToast(msg){
+  toastEl.textContent = msg;
+  toastEl.style.display = 'block';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => {
+    toastEl.style.display = 'none';
+  }, 1200);
+}
+
 function priceFromCode(raw){
   const cleanStr = String(raw).trim().replace(/,/g, '');
   if(!/^\d+(?:\.\d+)?$/.test(cleanStr)) return null;
@@ -125,19 +147,17 @@ function addCode(raw){
     return;
   }
   
-  // 新商品加入陣列最前方 (index 0)
-  cart.unshift({code, price, isNew: true});
+  cart.unshift({code, price});
   
   statusEl.className = 'ok';
-  statusEl.textContent = `✓ 成功加入上件商品：$${money(price)}`;
+  statusEl.textContent = `✓ 成功加入商品：$${money(price)}`;
   
-  // 提示音與相機綠框閃爍
   playBeep();
   flashScanArea();
+  showToast(`✅ 已加入 $${money(price)} (累計 ${cart.length} 件)`);
   
   codeInput.value = '';
   renderCart();
-  codeInput.focus();
 }
 
 function addFromInput(){ addCode(codeInput.value); }
@@ -152,11 +172,15 @@ codeInput.addEventListener('keydown', e => {
 function flashScanArea(){
   const readerEl = document.getElementById('reader');
   readerEl.classList.add('scan-flash');
-  setTimeout(() => readerEl.classList.remove('scan-flash'), 300);
+  setTimeout(() => readerEl.classList.remove('scan-flash'), 250);
 }
 
 function renderCart(){
   const box = document.getElementById('items');
+  const countBadge = document.getElementById('itemCountBadge');
+  
+  countBadge.textContent = `共 ${cart.length} 件商品`;
+  
   if(!cart.length){
     box.innerHTML = '<div class="hint">尚未掃描商品</div>';
     document.getElementById('cartTotal').textContent = '0';
@@ -167,7 +191,7 @@ function renderCart(){
     <div class="item ${i === 0 ? 'latest' : ''}">
       <div>
         <strong>$${money(x.price)} ${i === 0 ? '<span style="color:#b45309;font-size:12px;font-weight:bold;">🔥 最新加入</span>' : ''}</strong>
-        <br><small>條碼/備註：${x.code}</small>
+        <br><small>標記/條碼：${x.code}</small>
       </div>
       <button onclick="removeItem(${i})">刪除</button>
     </div>`).join('');
@@ -178,28 +202,37 @@ function renderCart(){
 function removeItem(i){
   cart.splice(i, 1);
   renderCart();
-  codeInput.focus();
 }
 
 function clearCart(){
+  if(cart.length > 0 && !confirm('確定要清除目前客人的所有商品嗎？')) return;
   cart.length = 0; 
   renderCart();
   statusEl.className = 'hint';
   statusEl.textContent = '已清除目前客人';
-  codeInput.focus();
+  
+  // 讓鍵盤收起，防止畫面跳動
+  codeInput.blur();
 }
 
 function checkout(){
   if(!cart.length){ alert('目前沒有商品'); return; }
   const total = cart.reduce((a, x) => a + x.price, 0);
-  history.unshift({ time: new Date(), total, count: cart.length });
+  const count = cart.length;
+  
+  history.unshift({ time: new Date(), total, count });
   cart.length = 0;
+  
   renderCart();
   renderHistory();
   updateToday();
+  
+  showToast(`🎉 結帳成功 $${money(total)} (共 ${count} 件)`);
   statusEl.className = 'ok';
   statusEl.textContent = `✓ 結帳完成 $${money(total)}，可接待下一位客人`;
-  codeInput.focus();
+  
+  // 讓鍵盤主動收起，保持畫面留在結帳完成位置
+  codeInput.blur();
 }
 
 function renderHistory(){
@@ -217,15 +250,12 @@ function updateToday(){
   document.getElementById('todayTotal').textContent = `今日營業額：$${money(total)}`;
 }
 
-// 相機開關切換 (支援連續掃描)
 async function toggleCamera(){
   const readerEl = document.getElementById('reader');
   const camBtn = document.getElementById('camBtn');
   
   if(html5QrcodeScanner && html5QrcodeScanner.isScanning){
     await stopCamera();
-    camBtn.textContent = '📷 開啟連續相機掃描';
-    camBtn.className = 'secondary';
   } else {
     readerEl.style.display = 'block';
     camBtn.textContent = '⏹ 關閉相機';
@@ -245,14 +275,13 @@ async function toggleCamera(){
         },
         (decodedText) => {
           const now = Date.now();
-          // 連續防誤刷機制：相同的條碼 1.5 秒內不重複算
-          if (decodedText === lastScannedCode && (now - lastScannedTime) < 1500) {
+          // 連續防誤刷：1.2 秒內重複條碼忽略
+          if (decodedText === lastScannedCode && (now - lastScannedTime) < 1200) {
             return;
           }
           lastScannedCode = decodedText;
           lastScannedTime = now;
 
-          // 成功掃描，加入清單且不關閉相機！
           addCode(decodedText);
         },
         (errorMessage) => {}
