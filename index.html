@@ -4,6 +4,8 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>東南亞雜貨店 POS</title>
+<!-- 導入跨平台相機掃描套件，支援 iOS Chrome / Safari / Android -->
+<script src="https://unpkg.com/html5-qrcode"></script>
 <style>
 *{box-sizing:border-box}
 body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f3f4f6;color:#111827}
@@ -32,7 +34,7 @@ button{border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:
 .history{max-height:320px;overflow:auto}
 .historyrow{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee}
 .hint{color:#6b7280;font-size:14px;line-height:1.6}
-video{width:100%;border-radius:12px;margin-top:12px;display:none;background:#000}
+#reader{width:100%;display:none;margin-top:12px;border-radius:12px;overflow:hidden;background:#000}
 @media(max-width:750px){.grid{grid-template-columns:1fr}header{align-items:flex-start;gap:10px;flex-direction:column}}
 </style>
 </head>
@@ -47,14 +49,13 @@ video{width:100%;border-radius:12px;margin-top:12px;display:none;background:#000
 <section class="card">
   <h2>掃描商品 / 輸入金額</h2>
   <div class="scanrow">
-    <!-- 改為 text 型態配合 inputmode="decimal"，避免瀏覽器對條碼或小數點不當過濾 -->
     <input id="code" class="scanbox" type="text" inputmode="decimal" autocomplete="off" autofocus placeholder="請輸入金額，例如 100">
     <button class="primary" onclick="addFromInput()">加入</button>
   </div>
-  <div id="status" class="hint">掃描條碼或直接輸入數字（例如：100 或 100.5）</div>
+  <div id="status" class="hint">掃描條碼或直接輸入數字（例如：100 或 50）</div>
   <button class="secondary" style="margin-top:10px;width:100%" onclick="startCamera()">📷 手機相機掃描</button>
-  <video id="video" playsinline></video>
-  <p class="hint">規則說明：可以直接輸入商品的價格。若掃描到長數字條碼（超過6碼），系統會提示確認或自動轉換。</p>
+  <div id="reader"></div>
+  <p class="hint">規則說明：可以直接輸入商品價格。若掃描到長數字條碼（如商品 EAN-13 條碼），超過合理金額時系統會提醒。</p>
 </section>
 
 <section class="card">
@@ -73,28 +74,26 @@ video{width:100%;border-radius:12px;margin-top:12px;display:none;background:#000
 </main>
 
 <script>
-const cart=[];
-const history=[];
-const codeInput=document.getElementById('code');
-const statusEl=document.getElementById('status');
-const video=document.getElementById('video');
-let stream=null;
+const cart = [];
+const history = [];
+const codeInput = document.getElementById('code');
+const statusEl = document.getElementById('status');
+let html5QrcodeScanner = null;
 
 function money(n){ return Math.round(n).toLocaleString('zh-TW'); }
 
-// 核心：修正與強化價格解析邏輯
+// 核心：價格解析與防呆 logic
 function priceFromCode(raw){
-  // 去除前後空白及常見分隔符號（如逗號）
   const cleanStr = String(raw).trim().replace(/,/g, '');
   
-  // 修正原本的 RegExp 轉義錯誤：/^\d+(?:\.\d+)?$/
+  // 修正正則表達式
   if(!/^\d+(?:\.\d+)?$/.test(cleanStr)) {
     return null;
   }
   
   const val = Number(cleanStr);
   
-  // 防呆：金額不大於 10,000,000（避免把 13 碼商品 EAN 條碼直接當作價格）
+  // 防呆：避免超過 1,000 萬（防止把 13 碼商品國際條碼直接算成價格）
   if(isNaN(val) || val <= 0 || val > 10000000) {
     return null;
   }
@@ -188,42 +187,40 @@ function updateToday(){
   document.getElementById('todayTotal').textContent = `今日營業額：$${money(total)}`;
 }
 
+// 跨平台相機控制邏輯 (支援 iOS Chrome / Safari / Android)
 async function startCamera(){
-  if(!('BarcodeDetector' in window)){
-    alert('這台裝置/瀏覽器目前不支援原生相機掃描，建議使用外接掃描槍或直接輸入金額。');
-    return;
+  const readerEl = document.getElementById('reader');
+  readerEl.style.display = 'block';
+
+  if (!html5QrcodeScanner) {
+    html5QrcodeScanner = new Html5Qrcode("reader");
   }
-  try{
-    const detector = new BarcodeDetector();
-    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
-    video.srcObject = stream;
-    video.style.display = 'block';
-    await video.play();
-    
-    const scan = async () => {
-      if(!stream) return;
-      try{
-        const codes = await detector.detect(video);
-        if(codes.length){
-          addCode(codes[0].rawValue);
-          stopCamera();
-          return;
-        }
-      }catch(e){}
-      requestAnimationFrame(scan);
-    };
-    scan();
-  }catch(e){
-    alert('無法開啟相機，請確認已授權相機使用權限。');
+
+  try {
+    await html5QrcodeScanner.start(
+      { facingMode: "environment" },
+      {
+        fps: 10,
+        qrbox: { width: 250, height: 150 }
+      },
+      (decodedText) => {
+        addCode(decodedText);
+        stopCamera();
+      },
+      (errorMessage) => {}
+    );
+  } catch (err) {
+    alert('無法開啟相機，請確認允許瀏覽器取得相機權限，且必須使用 HTTPS 連線。');
+    readerEl.style.display = 'none';
   }
 }
 
-function stopCamera(){
-  if(stream){
-    stream.getTracks().forEach(t => t.stop());
-    stream = null;
+async function stopCamera(){
+  const readerEl = document.getElementById('reader');
+  if (html5QrcodeScanner && html5QrcodeScanner.isScanning) {
+    await html5QrcodeScanner.stop();
   }
-  video.style.display = 'none';
+  readerEl.style.display = 'none';
 }
 
 renderCart();
