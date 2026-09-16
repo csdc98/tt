@@ -1,0 +1,234 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>東南亞雜貨店 POS</title>
+<style>
+*{box-sizing:border-box}
+body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;background:#f3f4f6;color:#111827}
+header{background:#111827;color:white;padding:18px 22px;display:flex;justify-content:space-between;align-items:center}
+h1{font-size:22px;margin:0}
+#todayTotal{font-size:18px;font-weight:700}
+main{max-width:1100px;margin:auto;padding:18px}
+.grid{display:grid;grid-template-columns:1fr 1.2fr;gap:18px}
+.card{background:white;border-radius:16px;padding:20px;box-shadow:0 2px 10px #00000012}
+.scanbox{font-size:20px;width:100%;padding:18px;border:2px solid #d1d5db;border-radius:12px}
+.scanbox:focus{outline:none;border-color:#111827}
+button{border:0;border-radius:12px;padding:14px 18px;font-size:17px;font-weight:700;cursor:pointer}
+.primary{background:#111827;color:white}
+.secondary{background:#e5e7eb;color:#111827}
+.scanrow{display:flex;gap:10px}
+.scanrow button{white-space:nowrap}
+#status{min-height:28px;margin-top:12px;font-weight:700}
+.ok{color:#15803d}.err{color:#b91c1c}
+.items{min-height:300px}
+.item{display:flex;justify-content:space-between;align-items:center;padding:13px 0;border-bottom:1px solid #e5e7eb}
+.item small{color:#6b7280}
+.item button{padding:7px 10px;font-size:14px;background:#fee2e2;color:#991b1b}
+.total{font-size:30px;font-weight:800;text-align:right;padding-top:18px}
+.checkout{width:100%;font-size:22px;margin-top:14px;background:#16a34a;color:white}
+.clear{width:100%;margin-top:8px}
+.history{max-height:320px;overflow:auto}
+.historyrow{display:flex;justify-content:space-between;padding:10px 0;border-bottom:1px solid #eee}
+.hint{color:#6b7280;font-size:14px;line-height:1.6}
+video{width:100%;border-radius:12px;margin-top:12px;display:none;background:#000}
+@media(max-width:750px){.grid{grid-template-columns:1fr}header{align-items:flex-start;gap:10px;flex-direction:column}}
+</style>
+</head>
+<body>
+<header>
+  <h1>🏪 東南亞雜貨店 POS</h1>
+  <div id="todayTotal">今日營業額：$0</div>
+</header>
+
+<main>
+<div class="grid">
+<section class="card">
+  <h2>掃描商品 / 輸入金額</h2>
+  <div class="scanrow">
+    <!-- 改為 text 型態配合 inputmode="decimal"，避免瀏覽器對條碼或小數點不當過濾 -->
+    <input id="code" class="scanbox" type="text" inputmode="decimal" autocomplete="off" autofocus placeholder="請輸入金額，例如 100">
+    <button class="primary" onclick="addFromInput()">加入</button>
+  </div>
+  <div id="status" class="hint">掃描條碼或直接輸入數字（例如：100 或 100.5）</div>
+  <button class="secondary" style="margin-top:10px;width:100%" onclick="startCamera()">📷 手機相機掃描</button>
+  <video id="video" playsinline></video>
+  <p class="hint">規則說明：可以直接輸入商品的價格。若掃描到長數字條碼（超過6碼），系統會提示確認或自動轉換。</p>
+</section>
+
+<section class="card">
+  <h2>目前這位客人</h2>
+  <div id="items" class="items"><div class="hint">尚未掃描商品</div></div>
+  <div class="total">總計：$<span id="cartTotal">0</span></div>
+  <button class="checkout" onclick="checkout()">✓ 結帳</button>
+  <button class="secondary clear" onclick="clearCart()">清除目前客人</button>
+</section>
+
+<section class="card" style="grid-column:1/-1">
+  <h2>今日交易紀錄</h2>
+  <div id="history" class="history"><div class="hint">今天尚無交易</div></div>
+</section>
+</div>
+</main>
+
+<script>
+const cart=[];
+const history=[];
+const codeInput=document.getElementById('code');
+const statusEl=document.getElementById('status');
+const video=document.getElementById('video');
+let stream=null;
+
+function money(n){ return Math.round(n).toLocaleString('zh-TW'); }
+
+// 核心：修正與強化價格解析邏輯
+function priceFromCode(raw){
+  // 去除前後空白及常見分隔符號（如逗號）
+  const cleanStr = String(raw).trim().replace(/,/g, '');
+  
+  // 修正原本的 RegExp 轉義錯誤：/^\d+(?:\.\d+)?$/
+  if(!/^\d+(?:\.\d+)?$/.test(cleanStr)) {
+    return null;
+  }
+  
+  const val = Number(cleanStr);
+  
+  // 防呆：金額不大於 10,000,000（避免把 13 碼商品 EAN 條碼直接當作價格）
+  if(isNaN(val) || val <= 0 || val > 10000000) {
+    return null;
+  }
+  
+  return val;
+}
+
+function addCode(raw){
+  const code = String(raw).trim();
+  if(!code) return;
+  
+  const price = priceFromCode(code);
+  if(price === null){
+    statusEl.className = 'err';
+    statusEl.textContent = '✗ 請輸入有效的數字金額（例如 100 或 50）';
+    codeInput.select();
+    return;
+  }
+  
+  cart.push({code, price});
+  statusEl.className = 'ok';
+  statusEl.textContent = `✓ 已加入 $${money(price)}`;
+  codeInput.value = '';
+  renderCart();
+  codeInput.focus();
+}
+
+function addFromInput(){ addCode(codeInput.value); }
+
+codeInput.addEventListener('keydown', e => {
+  if(e.key === 'Enter'){
+    e.preventDefault();
+    addFromInput();
+  }
+});
+
+function renderCart(){
+  const box = document.getElementById('items');
+  if(!cart.length){
+    box.innerHTML = '<div class="hint">尚未掃描商品</div>';
+    document.getElementById('cartTotal').textContent = '0';
+    return;
+  }
+  box.innerHTML = cart.map((x, i) => `
+    <div class="item">
+      <div><strong>$${money(x.price)}</strong><br><small>輸入標記：${x.code}</small></div>
+      <button onclick="removeItem(${i})">刪除</button>
+    </div>`).join('');
+  document.getElementById('cartTotal').textContent = money(cart.reduce((a, x) => a + x.price, 0));
+}
+
+function removeItem(i){
+  cart.splice(i, 1);
+  renderCart();
+  codeInput.focus();
+}
+
+function clearCart(){
+  cart.length = 0; 
+  renderCart();
+  statusEl.className = 'hint';
+  statusEl.textContent = '已清除目前客人';
+  codeInput.focus();
+}
+
+function checkout(){
+  if(!cart.length){ alert('目前沒有商品'); return; }
+  const total = cart.reduce((a, x) => a + x.price, 0);
+  history.unshift({ time: new Date(), total, count: cart.length });
+  cart.length = 0;
+  renderCart();
+  renderHistory();
+  updateToday();
+  statusEl.className = 'ok';
+  statusEl.textContent = `✓ 結帳完成 $${money(total)}，可接待下一位客人`;
+  codeInput.focus();
+}
+
+function renderHistory(){
+  const box = document.getElementById('history');
+  if(!history.length){ box.innerHTML = '<div class="hint">今天尚無交易</div>'; return; }
+  box.innerHTML = history.map(x => `
+    <div class="historyrow">
+      <span>${x.time.toLocaleTimeString('zh-TW', {hour:'2-digit', minute:'2-digit'})} (${x.count} 件)</span>
+      <strong>$${money(x.total)}</strong>
+    </div>`).join('');
+}
+
+function updateToday(){
+  const total = history.reduce((a, x) => a + x.total, 0);
+  document.getElementById('todayTotal').textContent = `今日營業額：$${money(total)}`;
+}
+
+async function startCamera(){
+  if(!('BarcodeDetector' in window)){
+    alert('這台裝置/瀏覽器目前不支援原生相機掃描，建議使用外接掃描槍或直接輸入金額。');
+    return;
+  }
+  try{
+    const detector = new BarcodeDetector();
+    stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: 'environment' } } });
+    video.srcObject = stream;
+    video.style.display = 'block';
+    await video.play();
+    
+    const scan = async () => {
+      if(!stream) return;
+      try{
+        const codes = await detector.detect(video);
+        if(codes.length){
+          addCode(codes[0].rawValue);
+          stopCamera();
+          return;
+        }
+      }catch(e){}
+      requestAnimationFrame(scan);
+    };
+    scan();
+  }catch(e){
+    alert('無法開啟相機，請確認已授權相機使用權限。');
+  }
+}
+
+function stopCamera(){
+  if(stream){
+    stream.getTracks().forEach(t => t.stop());
+    stream = null;
+  }
+  video.style.display = 'none';
+}
+
+renderCart();
+renderHistory();
+updateToday();
+</script>
+</body>
+</html>
